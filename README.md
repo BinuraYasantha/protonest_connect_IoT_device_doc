@@ -109,16 +109,31 @@ To use these files, they must be accessible by your device's code. There are two
 
 * **Method A: Flash Filesystem (Recommended)**
 Upload the files directly to the device's storage (LittleFS/SPIFFS). This keeps your code clean and secure.
-  * **Arduino IDE:** [How to Upload Files to ESP32 Filesystem](https://)
-  * **PlatformIO:** [Upload Filesystem Image Task](https://www)
+  * **Arduino IDE:** [How to Upload Files to ESP32 Filesystem](https://randomnerdtutorials.com/arduino-ide-2-install-esp32-littlefs/)
+  * **PlatformIO:** [Upload Filesystem Image Task](https://randomnerdtutorials.com/esp32-vs-code-platformio-littlefs/)
 
 
 * **Method B: Hardcoding**
-Paste the certificate content directly into your code as variables.
-  * **Arduino:** [Hardcoding Certificates Guide](https:)
-  * **PlatformIO:** [Hardcoding Certificates Guide](https:)
+Copy your certificate content and paste it directly into your code using "Raw String Literals". This avoids file uploads.
 
+  **Syntax:** `R"EOF( ...PASTE CONTENT HERE... )EOF"`
 
+    **Code:**
+
+    ```cpp
+    // Global Variable
+    const char* ROOT_CA = R"EOF(
+    -----BEGIN CERTIFICATE-----
+    MIIDdTCCAl2gAwIBAgILBAAAAAABFUtaw5QwDQYJKoZIhvcNAQEFBQAwVzELMAkG
+    ... (Paste full content) ...
+    -----END CERTIFICATE-----
+    )EOF";
+
+    void loadCertificates() {
+
+      net.setCACert(ROOT_CA);
+    }
+    ```
 
 ---
 
@@ -455,7 +470,6 @@ This section defines the network credentials.
 This variable defines the **file path** inside the LittleFS partition.
 
 * `ROOT_CA`: Points to the server's public certificate file path (e.g., `/root-ca.crt`). This is used to verify the server's identity during the secure handshake.
-
 
 ### 4. `// --- OBJECTS ---`
 
@@ -949,9 +963,22 @@ This section explains how to implement Over-The-Air (OTA) firmware updates. This
 
 Before implementing OTA, you must know how to generate the compiled `.bin` file that will be uploaded to the Protonest dashboard.
 
-1. **Arduino IDE:** [How to Export Compiled Binary](https://www.google.com/search?q=https://docs.arduino.cc/software/ide-v1/tutorials/export-compiled-binary)
+How to Build Firmware Image
+To export (locate) the compiled `.bin` file
 
-2. **PlatformIO:** [How to Build Firmware Image](https://docs.platformio.org/en/latest/core/userguide/cmd_run.html)
+1. **Arduino IDE:**
+
+   * **Board:** Select the board manager that matches your specific hardware requirements.
+   * **Export:** Click **Sketch** > **Export Compiled Binary** (or `Ctrl` + `Alt` + `S`).
+   * **Open Folder:** Click **Sketch** > **Show Sketch Folder**.
+   * **Find File:** Open the `build` folder, then the specific board folder (e.g., `esp32.esp32.esp32c3`). Your file is inside, named `project_name.bin`.
+
+2. **PlatformIO:**
+
+   * **Build Project:** Click the **checkmark (✓) icon** in the bottom status bar to compile your code.
+   * **Open Project Folder:** Right-click inside the file explorer sidebar and select **Reveal in File Explorer** (or Finder).
+   * **Find File:** Navigate to the hidden `.pio` folder  `build`  `your_environment_name` (e.g., `esp32dev`). The file is named `firmware.bin`.
+
 
 ---
 
@@ -1171,6 +1198,60 @@ This code combines the X.509 MQTT connection setup with the new OTA update logic
 ### Full Code: PSK Version (With OTA)
 
 This code combines the PSK MQTT connection setup with the new OTA update logic. [VIEW](./PSK_OTA.md)
+
+---
+
+### Robust OTA with Automatic Rollback
+
+Standard OTA updates carry a risk: if the new firmware has a bug (e.g., a typo in the WiFi password or a runtime crash), the device may disconnect permanently ("brick"). To prevent this, we implement a **Robust Rollback System**.
+
+### 1. The Concept: "Probation Mode"
+
+When a device updates and reboots, it does not immediately "accept" the new firmware. Instead, it enters a **Probation Mode**.
+
+During this period (set to **60 seconds** in our code), the device is monitored. It must pass three specific tests to be marked as "Valid":
+
+1. **Boot Stability:** It must not crash or reset (Crash Loop protection).
+2. **Network Connectivity:** It must successfully connect to Wi-Fi.
+3. **Cloud Connectivity:** It must authenticate with the MQTT Broker and **stay connected** for the full duration of the timer.
+
+**The Safety Net:**
+If *any* of these checks fail during the probation period, the device triggers an automatic **Rollback**. It reverts the partition table to point back to the previous working firmware and restarts.
+
+### 2. Complete Source Code Downloads
+
+We provide two complete, ready-to-use implementations of this robust rollback logic, tailored to your specific authentication method.
+
+**X.509 Authentication (Certificates)**
+
+* **Contents:** `main_x509.ino`, `OTADiagnostics.h`
+* **Download:** [📥 Download Source Code (X.509 Authentication)](./X509_OTA_UPDATE_ROLLBACK_ACK/)
+
+
+**PSK Authentication (Username/Password)**
+
+* **Contents:** `main_psk.ino`, `OTADiagnostics.h`
+* **Download:** [📥 Download Source Code (PSK Authentication)](./PSK_OTA_UPDATE_ROLLBACK_ACK/)
+
+---
+
+### 3. File Overview
+
+Both download packages contain the following core components:
+
+* **`OTADiagnostics.h`**: A dedicated library file that acts as the "Black Box." It handles:
+  * **Crash Detection:** Counts boot attempts to detect infinite restart loops.
+  * **Stability Timer:** Enforces the 60-second connection rule.
+  * **Rollback Trigger:** Executes the partition swap if checks fail.
+  * **NVS Logging:** Saves the error reason (e.g., `REASON_MQTT_TIMEOUT`) so the old firmware can report why the new one failed.
+
+
+* **`main.ino`**: The main firmware file, pre-configured to:
+  * Initialize the diagnostics engine in `setup()`.
+  * Feed connection status to the engine in `loop()`.
+  * Check for and report any previous rollback events via MQTT telemetry upon successful connection.
+
+---
 
 ## 3.7 Extra Security: Secure Boot & Flash Encryption
 
